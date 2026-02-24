@@ -411,26 +411,26 @@ async function sendToSheets(sc,scales){
 async function sendEmailReport(sc,scales){
   const chip=document.getElementById("chip-email");
   try{
-    // Generate PDF as base64
-    const pdfB64=generatePDFBase64(sc,scales);
     const date=new Date().toLocaleDateString("es-CO");
-    const tableRows=scales.map(s=>`${s.name}: ${s.score} — ${s.level.label}`).join("\n");
+    // Build plain-text summary table (EmailJS has ~50KB limit on template vars)
+    const tableRows=scales.map(s=>`• ${s.name}: ${s.score} pts — ${s.level.label}`).join("\n");
 
-    emailjs.init(EMAILJS_PUBLIC_KEY);
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,{
-      to_email: CLINIC_EMAIL,
+    emailjs.init({publicKey: EMAILJS_PUBLIC_KEY});
+    const result = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,{
+      to_email:    CLINIC_EMAIL,
       patient_name: patientName,
-      patient_dob: patientDOB,
-      session: sessionType,
-      date: date,
+      patient_dob:  patientDOB || "No registrada",
+      session:      sessionType,
+      date:         date,
       summary_table: tableRows,
-      pdf_base64: pdfB64,
-      subject: `Evaluación psicométrica – ${patientName} – ${sessionType} – ${date}`
+      title:        `Evaluación – ${patientName} – ${sessionType}`,
     });
-    chip.textContent="✅ Informe enviado al correo";chip.classList.add("chip-done");
+    console.log("EmailJS OK:", result.status, result.text);
+    chip.textContent="✅ Notificación enviada al correo";chip.classList.add("chip-done");
   }catch(e){
-    console.error("EmailJS error:",e);
-    chip.textContent="⚠ Configurar EmailJS para envío automático";chip.classList.add("chip-error");
+    console.error("EmailJS error:", JSON.stringify(e));
+    chip.textContent="⚠ Error email: "+( e.text||e.message||JSON.stringify(e));
+    chip.classList.add("chip-error");
   }
 }
 
@@ -533,8 +533,9 @@ function generatePDFDoc(sc, scales){
   const gridRows=Math.ceil(scales.length/cardsPerRow);
   y+=gridRows*(cardH+cardGap)+6;
 
-  // Section: radar chart via canvas snapshot
-  // We'll skip canvas snapshot (complex) and use a bar chart instead drawn manually
+  // Section: bar chart — add page if not enough space
+  const barsNeeded = scales.length*(7+5)+30; // approx height needed
+  if(y+barsNeeded > 270){ doc.addPage(); y=20; }
   doc.setTextColor(...C.brown); doc.setFont("helvetica","bold"); doc.setFontSize(11);
   doc.text("Perfil de síntomas (% del máximo)",M,y); y+=8;
   doc.setDrawColor(...C.beige); doc.setLineWidth(0.3);
@@ -577,7 +578,7 @@ function generatePDFDoc(sc, scales){
   y+=8;
 
   // Section: clinical interpretation
-  if(y>220){doc.addPage();y=20;}
+  if(y>255){doc.addPage();y=20;}
   doc.setTextColor(...C.brown); doc.setFont("helvetica","bold"); doc.setFontSize(11);
   doc.text("Interpretación clínica",M,y); y+=8;
   doc.setDrawColor(...C.beige); doc.setLineWidth(0.3);
@@ -593,7 +594,7 @@ function generatePDFDoc(sc, scales){
   ];
 
   interps.forEach(interp=>{
-    if(y>265){doc.addPage();y=20;}
+    if(y>260){doc.addPage();y=20;}
     const tagW=36, textStartX=M+tagW+6, textAvailW=W-M*2-tagW-10;
     doc.setFontSize(8); doc.setFont("helvetica","normal");
     const lines=doc.splitTextToSize(interp.text, textAvailW);
@@ -613,8 +614,19 @@ function generatePDFDoc(sc, scales){
     y+=bh+5;
   });
 
-  // Footer on every page
+  // Header on pages 2+ (slim)
   const totalPages=doc.internal.getNumberOfPages();
+  for(let p=2;p<=totalPages;p++){
+    doc.setPage(p);
+    doc.setFillColor(...C.dark); doc.rect(0,0,W,14,"F");
+    doc.setFillColor(...C.salmon); doc.rect(0,14,W,2,"F");
+    doc.setTextColor(...C.white); doc.setFont("helvetica","bold"); doc.setFontSize(7.5);
+    doc.text("Psychology for You — Informe de Evaluación Psicométrica",M,9);
+    doc.setFont("helvetica","normal");
+    doc.text(patientName+" · "+sessionType, W-M, 9, {align:"right"});
+  }
+
+  // Footer on every page
   for(let p=1;p<=totalPages;p++){
     doc.setPage(p);
     const fy=doc.internal.pageSize.height-14;
